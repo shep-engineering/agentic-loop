@@ -1,0 +1,31 @@
+#!/bin/sh
+# Append-only guard for the validation-log ledger (SKILL Rule 6).
+# Installed by install-ledger.sh. The LEDGER path below is written by the
+# installer and MUST match the ledger file it creates (single source of truth).
+# Blocks any staged change that MODIFIES or DELETES existing ledger lines; pure
+# appends are allowed. Local defense-in-depth only; true tamper-evidence needs a
+# push-protected remote (force-push / history-rewrite blocked) or branch/PR review.
+
+LEDGER="__LEDGER_PATH__"
+
+# Nothing staged for the ledger? nothing to check. -F = fixed string (path has a literal
+# '.' that regex would treat as any-char).
+if ! git diff --cached --name-only | grep -qxF "$LEDGER"; then
+    exit 0
+fi
+
+# Count deleted content lines in the staged diff (removed or edited existing lines).
+# Exclude ONLY the two exact diff file-header forms: '--- a/<path>' and '--- /dev/null'.
+# Do NOT exclude by a loose prefix like '^---' or '^--- ': a deleted ledger CONTENT line
+# such as a markdown rule ('---' -> '----' in the diff) or a sign-off ('-- Alice' -> '--- Alice')
+# would be wrongly skipped, letting a real tamper through (false-negative). Anchoring to the
+# exact header forms is the only safe exclusion.
+deleted=$(git diff --cached --unified=0 -- "$LEDGER" | grep -E '^-' | grep -v '^--- a/' | grep -v '^--- /dev/null' | wc -l | tr -d ' ')
+
+if [ "$deleted" -gt 0 ]; then
+    echo "REJECTED: $LEDGER is append-only. Your change removes or edits $deleted existing line(s)."
+    echo "A correction must be a NEW entry that references the one it supersedes -- never an edit."
+    exit 1
+fi
+
+exit 0
